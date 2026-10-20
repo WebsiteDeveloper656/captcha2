@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CAPTCHA API Tester</title>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+            color: #1f2937;
+        }
+
+        .container {
+            max-width: 650px;
+            margin: 40px auto;
+            padding: 30px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,.1);
+        }
+
+        h1 { text-align: center; color: #2563eb; }
+
+        .api-key {
+            padding: 12px;
+            background: #eff6ff;
+            border-radius: 6px;
+            overflow-wrap: anywhere;
+        }
+
+        button {
+            padding: 12px 18px;
+            margin: 8px 4px 8px 0;
+            border: none;
+            border-radius: 6px;
+            background: #2563eb;
+            color: white;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        button:hover { background: #1d4ed8; }
+
+        .logout { background: #dc2626; }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        #captchaImage {
+            display: block;
+            margin: 15px 0;
+            max-width: 100%;
+            min-height: 20px;
+        }
+
+        #result {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-wrap: anywhere;
+        }
+.log{
+margin-left:250px;
+}
+        .section {
+            margin-top: 25px;
+            padding-top: 15px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .back {
+            display: inline-block;
+            margin-top: 20px;
+            color: #2563eb;
+            text-decoration: none;
+        }
+    </style>
+</head>
+
+<body>
+<div class="container">
+
+    <h1>CAPTCHA API Tester</h1>
+
+    <p><strong>Your API Key:</strong></p>
+    <div class="api-key" >{{ api_key }}</div>
+
+    <div class="section">
+        <h2>Create CAPTCHA</h2>
+        <button type="button" onclick="createCaptcha()">
+            Create CAPTCHA
+        </button>
+
+        <div id="captchaArea"></div>
+    </div>
+
+    <div class="section">
+        <h2>Verify CAPTCHA</h2>
+
+        <input
+            type="text"
+            id="captchaAnswer"
+            placeholder="Enter CAPTCHA text"
+            autocomplete="off"
+        >
+
+        <button type="button" onclick="verifyCaptcha()">
+            Verify CAPTCHA
+        </button>
+
+        <div id="result" role="status"></div>
+    </div>
+
+    <div class="log">
+        <a href="/logout">
+            <button type="button" class="logout">Logout</button>
+        </a>
+    </div>
+</div>
+
+<script>
+    const apiKey = {{ api_key | tojson }};
+    let currentCaptchaId = null;
+    let currentImageUrl = null;
+
+    async function createCaptcha() {
+        const area = document.getElementById("captchaArea");
+        const result = document.getElementById("result");
+
+        area.textContent = "Creating CAPTCHA...";
+        result.textContent = "";
+        currentCaptchaId = null;
+
+        if (currentImageUrl) {
+            URL.revokeObjectURL(currentImageUrl);
+            currentImageUrl = null;
+        }
+
+        try {
+            const response = await fetch("/captcha/create", {
+                method: "POST",
+                headers: {
+                    "X-API-Key": apiKey
+                }
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || data.message || "Failed to create CAPTCHA"
+                );
+            }
+
+            currentCaptchaId = data.captcha_id;
+
+            area.innerHTML = `
+                <p><strong>CAPTCHA ID:</strong></p>
+                <p id="captchaId"></p>
+                <p id="imageStatus">Loading CAPTCHA image...</p>
+                <img id="captchaImage" alt="CAPTCHA image">
+            `;
+
+            document.getElementById("captchaId").textContent =
+                currentCaptchaId;
+
+            document.getElementById("captchaAnswer").value = "";
+
+            // Image ko API key ke saath fetch karna zaroori hai.
+            const imageResponse = await fetch(
+                "/captcha/image/" + encodeURIComponent(currentCaptchaId),
+                {
+                    headers: {
+                        "X-API-Key": apiKey
+                    },
+                    cache: "no-store"
+                }
+            );
+
+            if (!imageResponse.ok) {
+                const message = await imageResponse.text();
+                throw new Error(
+                    "Image load failed (" + imageResponse.status + "). " +
+                    message.slice(0, 150)
+                );
+            }
+
+            const imageBlob = await imageResponse.blob();
+            currentImageUrl = URL.createObjectURL(imageBlob);
+
+            document.getElementById("captchaImage").src = currentImageUrl;
+            document.getElementById("imageStatus").textContent =
+                "Enter the characters shown in this image.";
+
+        } catch (error) {
+            area.textContent = error.message;
+        }
+    }
+
+    async function verifyCaptcha() {
+        const answer = document.getElementById("captchaAnswer").value.trim();
+        const result = document.getElementById("result");
+
+        if (!currentCaptchaId) {
+            result.textContent = "Please create a CAPTCHA first.";
+            return;
+        }
+
+        if (!answer) {
+            result.textContent = "Please enter CAPTCHA text.";
+            return;
+        }
+
+        result.textContent = "Verifying...";
+
+        try {
+            const response = await fetch("/captcha/verify", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-API-Key": apiKey
+                },
+                body: JSON.stringify({
+                    captcha_id: currentCaptchaId,
+                    answer: answer
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || data.message || "Verification failed"
+                );
+            }
+
+            result.textContent = data.message ||
+                (data.verified
+                    ? "CAPTCHA verified successfully!"
+                    : "Incorrect CAPTCHA");
+
+            if (data.verified) {
+                currentCaptchaId = null;
+            }
+
+        } catch (error) {
+            result.textContent = "Error: " + error.message;
+        }
+    }
+</script>
+</body>
+</html>
